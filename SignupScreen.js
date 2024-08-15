@@ -1,5 +1,6 @@
+// SignupScreen.js
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Animated } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Animated, Image } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import AWS from 'aws-sdk';
 import { useLanguage } from './LanguageContext'; // Import the language context
@@ -126,6 +127,10 @@ export default function SignupScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
+      <Image
+        source={require('./old_mutual_image.png')} // Path to your Old Mutual logo
+        style={styles.logo}
+      />
       {!languageSelected ? (
         <Animated.View style={{ ...styles.languagePicker, opacity: fadeAnim }}>
           <Text style={styles.title}>{language === 'es' ? 'Selecciona tu idioma' : 'Select Your Language'}</Text>
@@ -213,52 +218,68 @@ export default function SignupScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#004d40', // Dark green background
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
   },
+  logo: {
+    width: 200,
+    height: 50,
+    marginBottom: 30,
+  },
   languagePicker: {
     width: '100%',
     padding: 20,
-    backgroundColor: '#333',
-    borderRadius: 10,
+    backgroundColor: '#ffffff', // White background for language picker
+    borderRadius: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 5,
   },
   form: {
     width: '100%',
     padding: 20,
-    backgroundColor: '#333',
-    borderRadius: 10,
+    backgroundColor: '#ffffff', // White background for the form
+    borderRadius: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 5,
   },
   title: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#004d40', // Dark green title
     marginBottom: 20,
     textAlign: 'center',
   },
   input: {
     width: '100%',
-    height: 40,
-    backgroundColor: '#555',
-    color: '#fff',
+    height: 50,
+    backgroundColor: '#f0f0f0', // Light gray input background
+    color: '#333', // Dark text color
     marginBottom: 15,
-    paddingHorizontal: 10,
-    borderRadius: 5,
+    paddingHorizontal: 15,
+    borderRadius: 10,
+    fontSize: 16,
   },
   picker: {
     height: 50,
     width: '100%',
-    backgroundColor: '#555',
-    color: '#fff',
+    backgroundColor: '#f0f0f0', // Light gray background for picker
+    color: '#333', // Dark text color
     marginBottom: 15,
-    borderRadius: 5,
+    borderRadius: 10,
   },
   button: {
     width: '100%',
     height: 50,
-    backgroundColor: '#007AFF',
-    borderRadius: 5,
+    backgroundColor: '#004d40', // Dark green button
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 10,
@@ -267,7 +288,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#aaa', // Color for disabled button
   },
   buttonText: {
-    color: '#fff',
+    color: '#ffffff', // White button text
     fontSize: 18,
     fontWeight: 'bold',
   },

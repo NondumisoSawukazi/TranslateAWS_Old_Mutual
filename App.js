@@ -1,4 +1,3 @@
-// App.js
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -13,7 +12,12 @@ const App = () => {
   return (
     <LanguageProvider>
       <NavigationContainer>
-        <Stack.Navigator initialRouteName="Login">
+        <Stack.Navigator 
+          initialRouteName="Login"
+          screenOptions={{
+            headerShown: false, // Hide headers on all screens
+          }}
+        >
           <Stack.Screen name="Login" component={LoginScreen} />
           <Stack.Screen name="Signup" component={SignupScreen} />
           <Stack.Screen name="Home" component={HomeScreen} />
