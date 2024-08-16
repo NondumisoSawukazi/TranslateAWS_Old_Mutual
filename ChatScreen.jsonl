@@ -1,0 +1,143 @@
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, Image } from 'react-native';
+
+const ChatScreen = () => {
+    const [messages, setMessages] = useState([]);
+    const [userInput, setUserInput] = useState('');
+
+    const handleSend = () => {
+        // Add logic to handle sending messages
+        if (userInput.trim() === '') return;
+
+        const newMessage = { id: Math.random().toString(), text: userInput, sender: 'user' };
+        setMessages([...messages, newMessage]);
+
+        // Clear input field
+        setUserInput('');
+
+        // Add bot response logic here
+        // This is a placeholder for bot response
+        const botMessage = { id: Math.random().toString(), text: 'This is a bot response', sender: 'bot' };
+        setMessages([...messages, newMessage, botMessage]);
+    };
+
+    const renderMessage = ({ item }) => (
+        <View style={item.sender === 'user' ? styles.userMessage : styles.botMessage}>
+            <Text style={styles.messageText}>{item.text}</Text>
+        </View>
+    );
+
+    return (
+        <View style={styles.container}>
+            <FlatList
+                data={messages}
+                keyExtractor={(item) => item.id}
+                renderItem={renderMessage}
+                contentContainerStyle={styles.messagesContainer}
+                inverted
+            />
+            <View style={styles.inputContainer}>
+                <TextInput
+                    style={styles.textInput}
+                    value={userInput}
+                    onChangeText={setUserInput}
+                    placeholder="Type your message..."
+                    placeholderTextColor="#999"
+                />
+                <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+                    <Image
+                        source={require('../assets/send-icon.png')} // Replace with your send icon path
+                        style={styles.sendIcon}
+                    />
+                </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={styles.botIcon} onPress={() => console.log('Bot icon pressed')}>
+                <Image
+                    source={require('../assets/bot-icon.png')} // Replace with your bot icon path
+                    style={styles.botImage}
+                />
+            </TouchableOpacity>
+        </View>
+    );
+};
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#f5f5f5',
+    },
+    messagesContainer: {
+        flexGrow: 1,
+        padding: 10,
+        justifyContent: 'flex-end',
+    },
+    userMessage: {
+        alignSelf: 'flex-end',
+        backgroundColor: '#007BFF',
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 8,
+        maxWidth: '75%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+    },
+    botMessage: {
+        alignSelf: 'flex-start',
+        backgroundColor: '#EAEAEA',
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 8,
+        maxWidth: '75%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+    },
+    messageText: {
+        color: '#000',
+        fontSize: 16,
+    },
+    inputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 10,
+        backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#ccc',
+    },
+    textInput: {
+        flex: 1,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 20,
+        padding: 10,
+        marginRight: 10,
+        fontSize: 16,
+    },
+    sendButton: {
+        backgroundColor: '#007BFF',
+        padding: 10,
+        borderRadius: 20,
+    },
+    sendIcon: {
+        width: 24,
+        height: 24,
+    },
+    botIcon: {
+        position: 'absolute',
+        bottom: 10,
+        right: 10,
+        backgroundColor: '#fff',
+        borderRadius: 50,
+        padding: 10,
+        elevation: 4,
+    },
+    botImage: {
+        width: 50,
+        height: 50,
+    },
+});
+
+export default ChatScreen;

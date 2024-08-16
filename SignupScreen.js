@@ -1,295 +1,543 @@
-// SignupScreen.js
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Animated, Image } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, Animated, FlatList, TextInput, Modal, Image } from 'react-native';
 import AWS from 'aws-sdk';
-import { useLanguage } from './LanguageContext'; // Import the language context
+import { useLanguage } from './LanguageContext';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { NavigationContainer } from '@react-navigation/native';
+import Icon from 'react-native-vector-icons/MaterialIcons';
+import { FontAwesome } from '@expo/vector-icons'; // Cartoon bot icon
 
-// Configure AWS
 AWS.config.update({
-  region: 'us-east-1', // replace with your AWS region
-  credentials: new AWS.Credentials('AKIAXYKJWQPXKSAPL65K', 'B0C1IMYKGadHannXCNrgeIBJwmtDAF/VUnWMg5nX'),
+    region: 'us-east-1',
+    credentials: new AWS.Credentials('AKIAXYKJWQPXKSAPL65K', 'B0C1IMYKGadHannXCNrgeIBJwmtDAF/VUnWMg5nX'),
 });
 
-const sns = new AWS.SNS();
-const dynamodb = new AWS.DynamoDB.DocumentClient(); // For DynamoDB operations
+const lexruntime = new AWS.LexRuntimeV2();
+const botId = 'FXNXT7ABHO';
+const botAliasId = '2JWA77FZT5';
+const localeId = 'en_US';
+const userId = 'user-' + Math.random();
 
-export default function SignupScreen({ navigation }) {
-  const { language, setLanguage } = useLanguage(); // Use the language from the context
-  const [name, setName] = useState('');
-  const [surname, setSurname] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [idNumber, setIdNumber] = useState('');
-  const [password, setPassword] = useState('');
-  const [languageSelected, setLanguageSelected] = useState(false);
-  const [translatedText, setTranslatedText] = useState({});
-  const [fadeAnim] = useState(new Animated.Value(0));
-
-  const handleSignup = async () => {
-    console.log('User signed up with:', {
-      name,
-      surname,
-      phoneNumber,
-      idNumber,
-      language,
-    });
-
-    // Save user data to DynamoDB
+const translateText = async (text, targetLanguage) => {
     try {
-      const params = {
-        TableName: 'dbUser', // Replace with your DynamoDB table name
-        Item: {
-          userID: idNumber, // Use a unique identifier
-          name,
-          surname,
-          phoneNumber,
-          idNumber,
-          password, // Save the password
-          language,
-        },
-      };
+        const translate = new AWS.Translate();
+        const params = {
+            SourceLanguageCode: 'en',
+            TargetLanguageCode: targetLanguage,
+            Text: text,
+        };
 
-      await dynamodb.put(params).promise();
-      console.log('User data saved to DynamoDB');
-
-      if (phoneNumber) {
-        await sendSMS(phoneNumber, `Hello ${name}, you have successfully signed up!`);
-      }
+        const result = await translate.translateText(params).promise();
+        return result.TranslatedText;
     } catch (error) {
-      console.error('Error saving user data to DynamoDB:', error);
+        console.error('Error translating text:', error);
+        return text;
     }
-  };
+};
 
-  const sendSMS = async (phoneNumber, message) => {
+const translateTextToEnglish = async (text, sourceLanguage) => {
     try {
-      const params = {
-        Message: message,
-        PhoneNumber: phoneNumber,
-      };
+        const translate = new AWS.Translate();
+        const params = {
+            SourceLanguageCode: sourceLanguage,
+            TargetLanguageCode: 'en',
+            Text: text,
+        };
 
-      await sns.publish(params).promise();
-      console.log('SMS sent successfully');
+        const result = await translate.translateText(params).promise();
+        return result.TranslatedText;
     } catch (error) {
-      console.error('Error sending SMS:', error);
+        console.error('Error translating text to English:', error);
+        return text;
     }
-  };
+};
 
-  const translateText = async (text, targetLanguage) => {
+const detectLanguage = async (text) => {
     try {
-      const translate = new AWS.Translate();
-      const params = {
-        SourceLanguageCode: 'en',
-        TargetLanguageCode: targetLanguage,
-        Text: text,
-      };
-
-      const result = await translate.translateText(params).promise();
-      return result.TranslatedText;
+        const comprehend = new AWS.Comprehend();
+        const params = {
+            TextList: [text],
+        };
+        const result = await comprehend.batchDetectDominantLanguage(params).promise();
+        return result.ResultList[0].LanguageCode;
     } catch (error) {
-      console.error('Error translating text:', error);
-      return text;
+        console.error('Error detecting language:', error);
+        return 'en'; // Default to English if detection fails
     }
-  };
+};
 
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 2000,
-      useNativeDriver: true,
-    }).start();
-  }, [fadeAnim]);
+const Tab = createBottomTabNavigator();
 
-  useEffect(() => {
-    const fetchTranslations = async () => {
-      if (language) {
-        const translations = await Promise.all([
-          translateText('Sign Up', language),
-          translateText('Name', language),
-          translateText('Surname', language),
-          translateText('Phone Number', language),
-          translateText('ID Number', language),
-          translateText('Password', language),
-          translateText('Next', language),
-        ]);
-        setTranslatedText({
-          signUp: translations[0],
-          name: translations[1],
-          surname: translations[2],
-          phoneNumber: translations[3],
-          idNumber: translations[4],
-          password: translations[5],
-          next: translations[6],
-        });
-      }
+const HomeScreen = ({ navigation }) => {
+    const { language, setLanguage } = useLanguage();
+    const [translations, setTranslations] = useState({});
+    const [fadeAnim] = useState(new Animated.Value(0));
+    const [messages, setMessages] = useState([]);
+    const [userInput, setUserInput] = useState('');
+    const [modalVisible, setModalVisible] = useState(false);
+    const [showInput, setShowInput] = useState(false); // Toggle input visibility
+
+    useEffect(() => {
+        const fetchTranslations = async () => {
+            const textsToTranslate = {
+                home: 'Home Screen',
+                goToLogin: 'Go to Login',
+            };
+
+            const translatedTexts = await Promise.all(
+                Object.entries(textsToTranslate).map(async ([key, text]) => {
+                    const translatedText = await translateText(text, language);
+                    return [key, translatedText];
+                })
+            );
+
+            setTranslations(Object.fromEntries(translatedTexts));
+        };
+
+        fetchTranslations();
+    }, [language]);
+
+    useEffect(() => {
+        Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 1500,
+            useNativeDriver: true,
+        }).start();
+    }, [fadeAnim]);
+
+    const handleSend = async () => {
+        const currentLanguage = language;
+        const targetLanguage = currentLanguage === 'af' ? 'en' : 'af'; // Translate to English if the language is Afrikaans
+
+        // Detect the language of the user input
+        const detectedLanguage = await detectLanguage(userInput);
+        const responseLanguage = detectedLanguage === 'en' ? 'en' : 'af';
+
+        // Translate user input to English if it's not in English
+        const translatedInput = detectedLanguage !== 'en'
+            ? await translateTextToEnglish(userInput, detectedLanguage)
+            : userInput;
+
+        const newMessage = { text: userInput, sender: 'user' };
+        setMessages(prevMessages => [...prevMessages, newMessage]);
+
+        const params = {
+            botId: botId,
+            botAliasId: botAliasId,
+            localeId: localeId,
+            text: translatedInput,
+            sessionId: userId,
+        };
+
+        try {
+            const data = await lexruntime.recognizeText(params).promise();
+            console.log('Data received from Lex:', JSON.stringify(data));
+
+            const botMessageText = data.requestAttributes && data.requestAttributes['x-amz-lex:qnA-search-response']
+                ? data.requestAttributes['x-amz-lex:qnA-search-response']
+                : 'No response from bot';
+
+            // Translate Lex response to Afrikaans if necessary
+            const translatedBotMessage = responseLanguage !== 'af'
+                ? await translateText(botMessageText, 'af')
+                : botMessageText;
+
+            const botMessage = { text: translatedBotMessage, sender: 'bot' };
+
+            setMessages(prevMessages => [...prevMessages, botMessage]);
+        } catch (err) {
+            console.error('Error from Lex:', err);
+        } finally {
+            setUserInput('');
+            setShowInput(false); // Hide input bar after sending
+        }
     };
-    fetchTranslations();
-  }, [language]);
 
-  return (
-    <View style={styles.container}>
-      <Image
-        source={require('./old_mutual_image.png')} // Path to your Old Mutual logo
-        style={styles.logo}
-      />
-      {!languageSelected ? (
-        <Animated.View style={{ ...styles.languagePicker, opacity: fadeAnim }}>
-          <Text style={styles.title}>{language === 'es' ? 'Selecciona tu idioma' : 'Select Your Language'}</Text>
-          <Picker
-            selectedValue={language}
-            style={styles.picker}
-            onValueChange={(itemValue) => setLanguage(itemValue)}
-          >
-            <Picker.Item label="English" value="en" />
-            <Picker.Item label="Spanish" value="es" />
-            <Picker.Item label="French" value="fr" />
-            <Picker.Item label="German" value="de" />
-            <Picker.Item label="Chinese" value="zh" />
-          </Picker>
-          <TouchableOpacity 
-            style={styles.button} 
-            onPress={() => setLanguageSelected(true)}
-            disabled={!language}
-          >
-            <Text style={styles.buttonText}>{translatedText.next || 'Next'}</Text>
-          </TouchableOpacity>
-        </Animated.View>
-      ) : (
-        <Animated.View style={{ ...styles.form, opacity: fadeAnim }}>
-          <Text style={styles.title}>{translatedText.signUp || 'Sign Up'}</Text>
+    const changeLanguage = (lang) => {
+        setLanguage(lang);
+        setModalVisible(false);
+    };
 
-          <TextInput
-            style={styles.input}
-            placeholder={translatedText.name || 'Name'}
-            value={name}
-            onChangeText={setName}
-          />
+    const renderItem = useCallback(({ item }) => (
+        <View style={item.sender === 'user' ? styles.userMessage : styles.botMessage}>
+            <Text style={styles.messageText}>{item.text}</Text>
+        </View>
+    ), [messages]);
 
-          <TextInput
-            style={styles.input}
-            placeholder={translatedText.surname || 'Surname'}
-            value={surname}
-            onChangeText={setSurname}
-          />
+    return (
+        <NavigationContainer independent={true}>
+            <Tab.Navigator
+                screenOptions={({ route }) => ({
+                    tabBarIcon: ({ focused, color, size }) => {
+                        let iconName;
 
-          <TextInput
-            style={styles.input}
-            placeholder={translatedText.phoneNumber || 'Phone Number'}
-            value={phoneNumber}
-            onChangeText={setPhoneNumber}
-            keyboardType="phone-pad"
-          />
+                        switch (route.name) {
+                            case 'Home':
+                                iconName = 'home';
+                                break;
+                            case 'Notifications':
+                                iconName = 'notifications';
+                                break;
+                            case 'Manage':
+                                iconName = 'business';
+                                break;
+                            case 'Profile':
+                                iconName = 'person';
+                                break;
+                        }
 
-          <TextInput
-            style={styles.input}
-            placeholder={translatedText.idNumber || 'ID Number'}
-            value={idNumber}
-            onChangeText={setIdNumber}
-            keyboardType="numeric"
-          />
+                        return <Icon name={iconName} size={size} color={color} />;
+                    },
+                    tabBarActiveTintColor: '#004B49', // Old Mutual dark green
+                    tabBarInactiveTintColor: '#7F8C8D',
+                    tabBarStyle: {
+                        backgroundColor: '#FFFFFF',
+                        borderTopColor: 'transparent',
+                        paddingBottom: 10,
+                        height: 60,
+                    },
+                    headerShown: false,
+                })}
+            >
+                <Tab.Screen name="Home">
+                    {() => (
+                        <View style={styles.container}>
+                            <TouchableOpacity
+                                style={styles.languageButton}
+                                onPress={() => setModalVisible(true)}
+                            >
+                                <Icon name="language" size={24} color="#004B49" />
+                            </TouchableOpacity>
 
-          <TextInput
-            style={styles.input}
-            placeholder={translatedText.password || 'Password'}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
+                            <Animated.View style={{ ...styles.titleContainer, opacity: fadeAnim }}>
+                                <Text style={styles.title}>{translations.home || 'Home Screen'}</Text>
+                            </Animated.View>
+                            <Animated.View style={{ ...styles.buttonContainer, opacity: fadeAnim }}>
+                                <TouchableOpacity
+                                    style={styles.button}
+                                    onPress={() => navigation.navigate('Login')}
+                                >
+                                    <Text style={styles.buttonText}>{translations.goToLogin || 'Go to Login'}</Text>
+                                </TouchableOpacity>
+                            </Animated.View>
 
-          <TouchableOpacity 
-            style={[styles.button, !language && styles.buttonDisabled]} 
-            onPress={handleSignup}
-            disabled={!language}
-          >
-            <Text style={styles.buttonText}>{translatedText.signUp || 'Sign Up'}</Text>
-          </TouchableOpacity>
+                            <View style={styles.chatContainer}>
+                                <FlatList
+                                    data={messages}
+                                    keyExtractor={(item, index) => index.toString()}
+                                    renderItem={renderItem}
+                                    contentContainerStyle={styles.messagesContainer}
+                                    inverted
+                                />
+                                {showInput && (
+                                    <View style={styles.inputContainer}>
+                                        <TextInput
+                                            style={styles.textInput}
+                                            value={userInput}
+                                            onChangeText={setUserInput}
+                                            placeholder="Type your message..."
+                                            placeholderTextColor="#999"
+                                        />
+                                        <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+                                            <Icon name="send" size={24} color="#fff" />
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                                <TouchableOpacity
+                                    style={styles.botIcon}
+                                    onPress={() => setShowInput(!showInput)}
+                                >
+                                    <FontAwesome name="robot" size={60} color="#004B49" /> {/* Cartoon bot icon */}
+                                </TouchableOpacity>
+                            </View>
 
-          <TouchableOpacity 
-            style={styles.button} 
-            onPress={() => navigation.navigate('Login')}
-          >
-            <Text style={styles.buttonText}>Go to Login</Text>
-          </TouchableOpacity>
-        </Animated.View>
-      )}
+                            <Modal
+                                animationType="slide"
+                                transparent={true}
+                                visible={modalVisible}
+                                onRequestClose={() => setModalVisible(false)}
+                            >
+                                <View style={styles.modalContainer}>
+                                    <View style={styles.modalContent}>
+                                        <Text style={styles.modalTitle}>Select Language</Text>
+                                        <TouchableOpacity
+                                            style={styles.modalButton}
+                                            onPress={() => changeLanguage('en')}
+                                        >
+                                            <Text style={styles.modalButtonText}>English</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={styles.modalButton}
+                                            onPress={() => changeLanguage('af')}
+                                        >
+                                            <Text style={styles.modalButtonText}>Afrikaans</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={styles.closeButton}
+                                            onPress={() => setModalVisible(false)}
+                                        >
+                                            <Text style={styles.closeButtonText}>Close</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            </Modal>
+                        </View>
+                    )}
+                </Tab.Screen>
+                <Tab.Screen name="Notifications" component={NotificationsScreen} />
+                <Tab.Screen name="Manage" component={ManageScreen} />
+                <Tab.Screen name="Profile" component={ProfileScreen} />
+            </Tab.Navigator>
+        </NavigationContainer>
+    );
+};
+
+const NotificationsScreen = () => {
+    const [notifications, setNotifications] = useState([
+        { id: '1', title: 'New Message', description: 'You have received a new message.' },
+        { id: '2', title: 'Update Available', description: 'A new update is available for your app.' },
+    ]);
+
+    return (
+        <View style={styles.notificationsContainer}>
+            <Text style={styles.notificationsTitle}>Notifications</Text>
+            <FlatList
+                data={notifications}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                    <View style={styles.notificationItem}>
+                        <Text style={styles.notificationTitle}>{item.title}</Text>
+                        <Text style={styles.notificationDescription}>{item.description}</Text>
+                    </View>
+                )}
+            />
+        </View>
+    );
+};
+
+const ManageScreen = () => (
+    <View style={styles.screenContainer}>
+        <Text style={styles.screenText}>Manage Screen</Text>
     </View>
-  );
-}
+);
+
+const ProfileScreen = () => (
+    <View style={styles.profileContainer}>
+        <Image style={styles.profilePicture} source={{ uri: 'https://via.placeholder.com/120' }} />
+        <Text style={styles.profileName}>John Doe</Text>
+        <Text style={styles.profileEmail}>johndoe@example.com</Text>
+    </View>
+);
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#004d40', // Dark green background
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  logo: {
-    width: 200,
-    height: 50,
-    marginBottom: 30,
-  },
-  languagePicker: {
-    width: '100%',
-    padding: 20,
-    backgroundColor: '#ffffff', // White background for language picker
-    borderRadius: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  form: {
-    width: '100%',
-    padding: 20,
-    backgroundColor: '#ffffff', // White background for the form
-    borderRadius: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#004d40', // Dark green title
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  input: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#f0f0f0', // Light gray input background
-    color: '#333', // Dark text color
-    marginBottom: 15,
-    paddingHorizontal: 15,
-    borderRadius: 10,
-    fontSize: 16,
-  },
-  picker: {
-    height: 50,
-    width: '100%',
-    backgroundColor: '#f0f0f0', // Light gray background for picker
-    color: '#333', // Dark text color
-    marginBottom: 15,
-    borderRadius: 10,
-  },
-  button: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#004d40', // Dark green button
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 10,
-  },
-  buttonDisabled: {
-    backgroundColor: '#aaa', // Color for disabled button
-  },
-  buttonText: {
-    color: '#ffffff', // White button text
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
+    container: {
+        flex: 1,
+        padding: 16,
+        backgroundColor: '#f5f5f5',
+    },
+    titleContainer: {
+        alignItems: 'center',
+        marginVertical: 20,
+    },
+    title: {
+        fontSize: 28,
+        fontWeight: 'bold',
+        color: '#004B49', // Old Mutual dark green
+    },
+    buttonContainer: {
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    button: {
+        backgroundColor: '#004B49', // Old Mutual dark green
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderRadius: 8,
+        elevation: 2,
+    },
+    buttonText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    chatContainer: {
+        flex: 1,
+        justifyContent: 'space-between',
+    },
+    messagesContainer: {
+        flexGrow: 1,
+        padding: 10,
+        justifyContent: 'flex-end',
+    },
+    userMessage: {
+        alignSelf: 'flex-end',
+        backgroundColor: '#004B49', // Old Mutual dark green
+        borderRadius: 20,
+        padding: 15,
+        marginBottom: 10,
+        maxWidth: '75%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+    },
+    botMessage: {
+        alignSelf: 'flex-start',
+        backgroundColor: '#EAEAEA',
+        borderRadius: 20,
+        padding: 15,
+        marginBottom: 10,
+        maxWidth: '75%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+    },
+    messageText: {
+        color: '#fff', // White text color for messages
+        fontSize: 16,
+    },
+    inputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 10,
+        backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#ccc',
+    },
+    textInput: {
+        flex: 1,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 20,
+        padding: 10,
+        marginRight: 10,
+        fontSize: 16,
+    },
+    sendButton: {
+        backgroundColor: '#004B49', // Old Mutual dark green
+        padding: 10,
+        borderRadius: 20,
+    },
+    sendButtonText: {
+        color: '#fff',
+        fontSize: 16,
+    },
+    modalContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    modalContent: {
+        backgroundColor: '#fff',
+        padding: 20,
+        borderRadius: 10,
+        width: '80%',
+        alignItems: 'center',
+    },
+    modalTitle: {
+        fontSize: 18,
+        marginBottom: 20,
+        fontWeight: 'bold',
+        color: '#004B49', // Old Mutual dark green
+    },
+    modalButton: {
+        padding: 10,
+        borderRadius: 5,
+        backgroundColor: '#004B49', // Old Mutual dark green
+        marginVertical: 5,
+        width: '100%',
+        alignItems: 'center',
+    },
+    modalButtonText: {
+        color: '#fff',
+        fontSize: 16,
+    },
+    notificationsContainer: {
+        flex: 1,
+        padding: 16,
+        backgroundColor: '#f5f5f5',
+    },
+    notificationsTitle: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        marginBottom: 10,
+        color: '#004B49', // Old Mutual dark green
+    },
+    notificationItem: {
+        padding: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#ccc',
+    },
+    notificationTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    notificationDescription: {
+        fontSize: 14,
+        color: '#555',
+    },
+    screenContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    screenText: {
+        fontSize: 24,
+        color: '#004B49', // Old Mutual dark green
+    },
+    profileContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 16,
+    },
+    profilePicture: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        marginBottom: 10,
+        borderWidth: 2,
+        borderColor: '#004B49', // Old Mutual dark green
+    },
+    profileName: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: '#004B49', // Old Mutual dark green
+    },
+    profileEmail: {
+        fontSize: 16,
+        color: '#555',
+    },
+    languageButton: {
+        position: 'absolute',
+        top: 16,
+        right: 16,
+        backgroundColor: '#fff',
+        borderRadius: 50,
+        padding: 10,
+        elevation: 4,
+    },
+    closeButton: {
+        padding: 10,
+        borderRadius: 5,
+        backgroundColor: '#004B49', // Old Mutual dark green
+        marginTop: 10,
+    },
+    closeButtonText: {
+        color: '#fff',
+        fontSize: 16,
+    },
+    botIcon: {
+        position: 'absolute',
+        bottom: 80,
+        right: 20,
+        backgroundColor: '#fff',
+        borderRadius: 50,
+        padding: 10,
+        elevation: 4,
+    },
 });
+
+export default HomeScreen;

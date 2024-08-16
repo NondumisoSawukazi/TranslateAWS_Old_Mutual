@@ -1,6 +1,5 @@
-// HomeScreen.js
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Animated, FlatList, Image, TextInput, Button, ScrollView, Modal } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, Animated, FlatList, TextInput, Modal, Image } from 'react-native';
 import AWS from 'aws-sdk';
 import { useLanguage } from './LanguageContext';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -12,10 +11,10 @@ AWS.config.update({
     credentials: new AWS.Credentials('AKIAXYKJWQPXKSAPL65K', 'B0C1IMYKGadHannXCNrgeIBJwmtDAF/VUnWMg5nX'),
 });
 
-const lexruntime = new AWS.LexRuntimeV2();  // Updated to LexRuntimeV2
-const botId = 'FXNXT7ABHO';  // Replace with your Bot ID
-const botAliasId = '2JWA77FZT5';  // Replace with your Bot Alias ID
-const localeId = 'en_US';  // Replace with your Locale ID
+const lexruntime = new AWS.LexRuntimeV2();
+const botId = 'FXNXT7ABHO';
+const botAliasId = '2JWA77FZT5';
+const localeId = 'en_US';
 const userId = 'user-' + Math.random();
 
 const translateText = async (text, targetLanguage) => {
@@ -35,6 +34,37 @@ const translateText = async (text, targetLanguage) => {
     }
 };
 
+const translateTextToEnglish = async (text, sourceLanguage) => {
+    try {
+        const translate = new AWS.Translate();
+        const params = {
+            SourceLanguageCode: sourceLanguage,
+            TargetLanguageCode: 'en',
+            Text: text,
+        };
+
+        const result = await translate.translateText(params).promise();
+        return result.TranslatedText;
+    } catch (error) {
+        console.error('Error translating text to English:', error);
+        return text;
+    }
+};
+
+const detectLanguage = async (text) => {
+    try {
+        const comprehend = new AWS.Comprehend();
+        const params = {
+            TextList: [text],
+        };
+        const result = await comprehend.batchDetectDominantLanguage(params).promise();
+        return result.ResultList[0].LanguageCode;
+    } catch (error) {
+        console.error('Error detecting language:', error);
+        return 'en'; // Default to English if detection fails
+    }
+};
+
 const Tab = createBottomTabNavigator();
 
 const HomeScreen = ({ navigation }) => {
@@ -42,7 +72,7 @@ const HomeScreen = ({ navigation }) => {
     const [translations, setTranslations] = useState({});
     const [fadeAnim] = useState(new Animated.Value(0));
     const [messages, setMessages] = useState([]);
-    const [userInput, setUserInput] = useState('Hello');
+    const [userInput, setUserInput] = useState('');
     const [modalVisible, setModalVisible] = useState(false);
 
     useEffect(() => {
@@ -74,14 +104,26 @@ const HomeScreen = ({ navigation }) => {
     }, [fadeAnim]);
 
     const handleSend = async () => {
+        const currentLanguage = language;
+        const targetLanguage = currentLanguage === 'af' ? 'en' : 'af'; // Translate to English if the language is Afrikaans
+
+        // Detect the language of the user input
+        const detectedLanguage = await detectLanguage(userInput);
+        const responseLanguage = detectedLanguage === 'en' ? 'en' : 'af';
+
+        // Translate user input to English if it's not in English
+        const translatedInput = detectedLanguage !== 'en'
+            ? await translateTextToEnglish(userInput, detectedLanguage)
+            : userInput;
+
         const newMessage = { text: userInput, sender: 'user' };
-        setMessages([...messages, newMessage]);
+        setMessages(prevMessages => [...prevMessages, newMessage]);
 
         const params = {
             botId: botId,
             botAliasId: botAliasId,
             localeId: localeId,
-            text: userInput,
+            text: translatedInput,
             sessionId: userId,
         };
 
@@ -89,12 +131,18 @@ const HomeScreen = ({ navigation }) => {
             const data = await lexruntime.recognizeText(params).promise();
             console.log('Data received from Lex:', JSON.stringify(data));
 
-            const botMessageText = data.requestAttributes && data.requestAttributes['x-amz-lex:qnA-search-response'] ? 
-                data.requestAttributes['x-amz-lex:qnA-search-response'] : 'No response from bot';
-            
-            const botMessage = { text: botMessageText, sender: 'bot' };
+            const botMessageText = data.requestAttributes && data.requestAttributes['x-amz-lex:qnA-search-response']
+                ? data.requestAttributes['x-amz-lex:qnA-search-response']
+                : 'No response from bot';
 
-            setMessages([...messages, newMessage, botMessage]);
+            // Translate Lex response to Afrikaans if necessary
+            const translatedBotMessage = responseLanguage !== 'af'
+                ? await translateText(botMessageText, 'af')
+                : botMessageText;
+
+            const botMessage = { text: translatedBotMessage, sender: 'bot' };
+
+            setMessages(prevMessages => [...prevMessages, botMessage]);
         } catch (err) {
             console.error('Error from Lex:', err);
         } finally {
@@ -106,6 +154,12 @@ const HomeScreen = ({ navigation }) => {
         setLanguage(lang);
         setModalVisible(false);
     };
+
+    const renderItem = useCallback(({ item }) => (
+        <View style={item.sender === 'user' ? styles.userMessage : styles.botMessage}>
+            <Text style={styles.messageText}>{item.text}</Text>
+        </View>
+    ), [messages]);
 
     return (
         <NavigationContainer independent={true}>
@@ -131,7 +185,7 @@ const HomeScreen = ({ navigation }) => {
 
                         return <Icon name={iconName} size={size} color={color} />;
                     },
-                    tabBarActiveTintColor: '#004B49',
+                    tabBarActiveTintColor: '#004B49', // Old Mutual dark green
                     tabBarInactiveTintColor: '#7F8C8D',
                     tabBarStyle: {
                         backgroundColor: '#FFFFFF',
@@ -139,12 +193,12 @@ const HomeScreen = ({ navigation }) => {
                         paddingBottom: 10,
                         height: 60,
                     },
-                    headerShown: false, // This removes the header
+                    headerShown: false,
                 })}
             >
                 <Tab.Screen name="Home">
                     {() => (
-                        <ScrollView contentContainerStyle={styles.container}>
+                        <View style={styles.container}>
                             <TouchableOpacity
                                 style={styles.languageButton}
                                 onPress={() => setModalVisible(true)}
@@ -163,22 +217,26 @@ const HomeScreen = ({ navigation }) => {
                                     <Text style={styles.buttonText}>{translations.goToLogin || 'Go to Login'}</Text>
                                 </TouchableOpacity>
                             </Animated.View>
+
                             <View style={styles.chatContainer}>
-                                <View style={styles.messagesContainer}>
-                                    {messages.map((msg, index) => (
-                                        <View key={index} style={msg.sender === 'user' ? styles.userMessage : styles.botMessage}>
-                                            <Text style={styles.messageText}>{msg.text}</Text>
-                                        </View>
-                                    ))}
-                                </View>
+                                <FlatList
+                                    data={messages}
+                                    keyExtractor={(item, index) => index.toString()}
+                                    renderItem={renderItem}
+                                    contentContainerStyle={styles.messagesContainer}
+                                    inverted
+                                />
                                 <View style={styles.inputContainer}>
                                     <TextInput
                                         style={styles.textInput}
                                         value={userInput}
                                         onChangeText={setUserInput}
                                         placeholder="Type your message..."
+                                        placeholderTextColor="#999"
                                     />
-                                    <Button title="Send" onPress={handleSend} />
+                                    <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+                                        <Icon name="send" size={24} color="#fff" />
+                                    </TouchableOpacity>
                                 </View>
                             </View>
 
@@ -199,21 +257,17 @@ const HomeScreen = ({ navigation }) => {
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={styles.modalButton}
-                                            onPress={() => changeLanguage('fr')}
+                                            onPress={() => changeLanguage('af')}
                                         >
-                                            <Text style={styles.modalButtonText}>French</Text>
+                                            <Text style={styles.modalButtonText}>Afrikaans</Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity
-                                            style={styles.modalButton}
-                                            onPress={() => changeLanguage('es')}
-                                        >
-                                            <Text style={styles.modalButtonText}>Spanish</Text>
+                                        <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeButton}>
+                                            <Text style={styles.closeButtonText}>Close</Text>
                                         </TouchableOpacity>
-                                        <Button title="Close" onPress={() => setModalVisible(false)} />
                                     </View>
                                 </View>
                             </Modal>
-                        </ScrollView>
+                        </View>
                     )}
                 </Tab.Screen>
                 <Tab.Screen name="Notifications" component={NotificationsScreen} />
@@ -224,12 +278,12 @@ const HomeScreen = ({ navigation }) => {
     );
 };
 
+
 const NotificationsScreen = () => {
-    const notifications = [
-        { id: '1', title: 'New Feature Release', description: 'Check out our latest feature updates!' },
-        { id: '2', title: 'Maintenance Notice', description: 'Scheduled maintenance will occur this weekend.' },
-        { id: '3', title: 'Reminder', description: 'Don’t forget to update your profile.' },
-    ];
+    const [notifications, setNotifications] = useState([
+        { id: '1', title: 'New Message', description: 'You have received a new message.' },
+        { id: '2', title: 'Update Available', description: 'A new update is available for your app.' },
+    ]);
 
     return (
         <View style={styles.notificationsContainer}>
@@ -254,21 +308,13 @@ const ManageScreen = () => (
     </View>
 );
 
-const ProfileScreen = () => {
-    const user = {
-        name: 'John Doe',
-        email: 'john.doe@example.com',
-        profilePicture: 'https://example.com/profile.jpg',
-    };
-
-    return (
-        <View style={styles.profileContainer}>
-            <Image source={{ uri: user.profilePicture }} style={styles.profilePicture} />
-            <Text style={styles.profileName}>{user.name}</Text>
-            <Text style={styles.profileEmail}>{user.email}</Text>
-        </View>
-    );
-};
+const ProfileScreen = () => (
+    <View style={styles.profileContainer}>
+        <Image style={styles.profilePicture} source={{ uri: 'https://via.placeholder.com/120' }} />
+        <Text style={styles.profileName}>John Doe</Text>
+        <Text style={styles.profileEmail}>johndoe@example.com</Text>
+    </View>
+);
 
 const styles = StyleSheet.create({
     container: {
@@ -279,61 +325,105 @@ const styles = StyleSheet.create({
     titleContainer: {
         alignItems: 'center',
         marginVertical: 20,
+        backgroundColor: 'linear-gradient(135deg, #004B49, #00796B)', // Add gradient effect
+        borderRadius: 10,
+        padding: 15,
     },
     title: {
-        fontSize: 24,
+        fontSize: 28,
         fontWeight: 'bold',
+        color: '#004B49', // Old Mutual dark green
     },
     buttonContainer: {
         alignItems: 'center',
+        marginBottom: 20,
     },
     button: {
-        backgroundColor: '#004B49',
-        padding: 10,
-        borderRadius: 5,
+        backgroundColor: '#00796B', // Darker green shade for the button
+        paddingVertical: 15,
+        paddingHorizontal: 25,
+        borderRadius: 25, // More rounded corners
+        elevation: 5,
     },
     buttonText: {
         color: '#fff',
-        fontSize: 16,
+        fontSize: 18,
+        fontWeight: 'bold',
     },
     chatContainer: {
         flex: 1,
+        justifyContent: 'space-between',
     },
     messagesContainer: {
-        flex: 1,
-        marginBottom: 10,
+        flexGrow: 1,
+        justifyContent: 'flex-end', // Ensure messages are aligned to the bottom
+        padding: 10,
     },
+
+    // Style for user messages
     userMessage: {
-        alignSelf: 'flex-end',
-        backgroundColor: '#007BFF',
-        borderRadius: 5,
-        padding: 10,
-        margin: 5,
-        maxWidth: '80%',
+        alignSelf: 'flex-end', // Align user messages to the right
+        backgroundColor: '#004B49', // Old Mutual dark green
+        borderRadius: 20,
+        padding: 15,
+        marginBottom: 10,
+        maxWidth: '75%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 2,
     },
+
+    // Style for bot messages
     botMessage: {
-        alignSelf: 'flex-start',
+        alignSelf: 'flex-start', // Align bot messages to the left
         backgroundColor: '#EAEAEA',
-        borderRadius: 5,
-        padding: 10,
-        margin: 5,
-        maxWidth: '80%',
+        borderRadius: 20,
+        padding: 15,
+        marginBottom: 10,
+        maxWidth: '75%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 2,
     },
+
+    // Style for message text
     messageText: {
-        color: '#000',
+        color: '#fff', // White text color for messages
+        fontSize: 16,
     },
+
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         padding: 10,
+        backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#ddd',
+        borderRadius: 20,
+        marginHorizontal: 10,
     },
     textInput: {
         flex: 1,
         borderWidth: 1,
         borderColor: '#ccc',
-        borderRadius: 5,
+        borderRadius: 20,
         padding: 10,
         marginRight: 10,
+        fontSize: 16,
+    },
+    sendButton: {
+        backgroundColor: '#00796B', // Darker green shade
+        padding: 12,
+        borderRadius: 25,
+        elevation: 4,
+    },
+    sendButtonText: {
+        color: '#fff',
+        fontSize: 16,
     },
     modalContainer: {
         flex: 1,
@@ -344,22 +434,30 @@ const styles = StyleSheet.create({
     modalContent: {
         backgroundColor: '#fff',
         padding: 20,
-        borderRadius: 10,
+        borderRadius: 15,
         width: '80%',
-    },
-    modalTitle: {
-        fontSize: 18,
-        marginBottom: 10,
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 5 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
     },
     modalButton: {
-        padding: 10,
+        padding: 12,
         borderRadius: 5,
-        backgroundColor: '#004B49',
-        marginBottom: 10,
+        backgroundColor: '#00796B', // Darker green shade
+        marginVertical: 5,
+        width: '100%',
+        alignItems: 'center',
+    },
+    // Modal button text style
+    modalButtonText: {
+        color: '#fff',
+        fontSize: 16,
     },
     modalButtonText: {
         color: '#fff',
-        textAlign: 'center',
+        fontSize: 16,
     },
     notificationsContainer: {
         flex: 1,
@@ -370,6 +468,7 @@ const styles = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
         marginBottom: 10,
+        color: '#004B49', // Old Mutual dark green
     },
     notificationItem: {
         padding: 10,
@@ -382,6 +481,7 @@ const styles = StyleSheet.create({
     },
     notificationDescription: {
         fontSize: 14,
+        color: '#555',
     },
     screenContainer: {
         flex: 1,
@@ -390,6 +490,7 @@ const styles = StyleSheet.create({
     },
     screenText: {
         fontSize: 24,
+        color: '#004B49', // Old Mutual dark green
     },
     profileContainer: {
         flex: 1,
@@ -398,14 +499,17 @@ const styles = StyleSheet.create({
         padding: 16,
     },
     profilePicture: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
+        width: 120,
+        height: 120,
+        borderRadius: 60,
         marginBottom: 10,
+        borderWidth: 2,
+        borderColor: '#004B49', // Old Mutual dark green
     },
     profileName: {
         fontSize: 24,
         fontWeight: 'bold',
+        color: '#004B49', // Old Mutual dark green
     },
     profileEmail: {
         fontSize: 16,
@@ -415,10 +519,22 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 16,
         right: 16,
-        backgroundColor: '#004B49',
+        backgroundColor: '#fff',
         borderRadius: 50,
         padding: 10,
+        elevation: 4,
     },
+    closeButton: {
+        padding: 10,
+        borderRadius: 5,
+        backgroundColor: '#004B49', // Old Mutual dark green
+        marginTop: 10,
+    },
+    // Close button text style
+    closeButtonText: {
+        color: '#fff',
+        fontSize: 16,
+    }
 });
 
 export default HomeScreen;
